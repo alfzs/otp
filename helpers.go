@@ -27,10 +27,6 @@ func generate(length int) (string, error) {
 
 // encrypt — AES-GCM с AAD
 func encrypt(key []byte, requestID, phone, plain string) (string, error) {
-	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
-		return "", fmt.Errorf("invalid AES key length: %d", len(key))
-	}
-
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
