@@ -17,7 +17,7 @@ var (
 	ErrInvalidCode = errors.New("invalid otp code")
 )
 
-// Storage интерфейс — thread-safe
+// Storage OTP кодов
 type Storage interface {
 	Get(ctx context.Context, requestID, phone string) ([]byte, bool, error)
 	Delete(ctx context.Context, requestID, phone string) error
