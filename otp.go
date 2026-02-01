@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -51,8 +52,14 @@ func NewOTPManager(p Params) *OTPManager {
 	}
 }
 
+type CreateParams struct {
+	RequestID string
+	Phone     string
+	Secret    string
+}
+
 // Create генерирует и сохраняет OTP
-func (m *OTPManager) Create(ctx context.Context, requestID, phone string, otpKey []byte) (string, error) {
+func (m *OTPManager) Create(ctx context.Context, p CreateParams) (string, error) {
 	plainOTP, err := generate(m.lengthOTP)
 	if err != nil {
 		return "", fmt.Errorf("generate otp: %w", err)
@@ -63,11 +70,11 @@ func (m *OTPManager) Create(ctx context.Context, requestID, phone string, otpKey
 		return "", fmt.Errorf("hash otp: %w", err)
 	}
 
-	if err := m.storage.Set(ctx, requestID, phone, hashOTP, m.cacheTTL); err != nil {
+	if err := m.storage.Set(ctx, p.RequestID, p.Phone, hashOTP, m.cacheTTL); err != nil {
 		return "", fmt.Errorf("store otp: %w", err)
 	}
 
-	encryptedOTP, err := encrypt(otpKey, requestID, phone, plainOTP)
+	encryptedOTP, err := encrypt(p.Secret, p.RequestID, p.Phone, plainOTP)
 	if err != nil {
 		return "", fmt.Errorf("encrypt otp: %w", err)
 	}
@@ -75,8 +82,14 @@ func (m *OTPManager) Create(ctx context.Context, requestID, phone string, otpKey
 	return encryptedOTP, nil
 }
 
+type VerifyParams struct {
+	RequestID string
+	Phone     string
+	Code      string
+}
+
 // Verify — одноразовая проверка OTP
-func (m *OTPManager) Verify(ctx context.Context, requestID, phone, code string) error {
+func (m *OTPManager) Verify(ctx context.Context, p VerifyParams) error {
 
 	// Обработка стремится к фиксированному времени
 	start := time.Now()
@@ -87,7 +100,7 @@ func (m *OTPManager) Verify(ctx context.Context, requestID, phone, code string) 
 	}()
 
 	// Получаем OTP код из хранилища
-	hash, ok, err := m.storage.Get(ctx, requestID, phone)
+	hash, ok, err := m.storage.Get(ctx, p.RequestID, p.Phone)
 	if err != nil {
 		return fmt.Errorf("get otp: %w", err)
 	}
@@ -95,22 +108,31 @@ func (m *OTPManager) Verify(ctx context.Context, requestID, phone, code string) 
 		return ErrNotFound
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(code)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(p.Code)); err != nil {
 		// код неверный, не трогаем storage
 		return ErrInvalidCode
 	}
 
 	// При успехе удаляем OTP из хранилища
-	if err := m.storage.Delete(ctx, requestID, phone); err != nil {
+	if err := m.storage.Delete(ctx, p.RequestID, p.Phone); err != nil {
 		return fmt.Errorf("delete otp: %w", err)
 	}
 
 	return nil
 }
 
+type DecryptParams struct {
+	RequestID string
+	Phone     string
+	Secret    string
+	Encrypted string
+}
+
 // Decrypt — расшифровка OTP
-func Decrypt(key []byte, requestID, phone, encrypted string) (string, error) {
-	data, err := base64.StdEncoding.DecodeString(encrypted)
+func Decrypt(p DecryptParams) (string, error) {
+	key := deriveAESKey(p.Secret)
+
+	data, err := base64.StdEncoding.DecodeString(p.Encrypted)
 	if err != nil {
 		return "", err
 	}
@@ -131,9 +153,9 @@ func Decrypt(key []byte, requestID, phone, encrypted string) (string, error) {
 	}
 
 	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-	aad := []byte(requestID + ":" + phone)
+	aadHash := sha256.Sum256([]byte(p.RequestID + ":" + p.Phone))
 
-	plain, err := gcm.Open(nil, nonce, ciphertext, aad)
+	plain, err := gcm.Open(nil, nonce, ciphertext, aadHash[:])
 	if err != nil {
 		return "", err
 	}

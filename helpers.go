@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"math/big"
@@ -26,7 +27,9 @@ func generate(length int) (string, error) {
 }
 
 // encrypt — AES-GCM с AAD
-func encrypt(key []byte, requestID, phone, plain string) (string, error) {
+func encrypt(secret, requestID, phone, plain string) (string, error) {
+	key := deriveAESKey(secret)
+
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
@@ -42,9 +45,13 @@ func encrypt(key []byte, requestID, phone, plain string) (string, error) {
 		return "", err
 	}
 
-	// AAD — фиксированного размера
-	aad := []byte(requestID + ":" + phone)
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plain), aad)
+	aad := sha256.Sum256([]byte(requestID + ":" + phone))
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plain), aad[:])
 
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+func deriveAESKey(secret string) []byte {
+	sum := sha256.Sum256([]byte(secret))
+	return sum[:]
 }
