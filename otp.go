@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -20,9 +21,9 @@ var (
 
 // Storage OTP кодов
 type Storage interface {
-	Get(ctx context.Context, requestID, phone string) ([]byte, bool, error)
-	Delete(ctx context.Context, requestID, phone string) error
-	Set(ctx context.Context, requestID, phone string, value []byte, ttl time.Duration) error
+	Get(ctx context.Context, tenantID uuid.UUID, requestID, phone string) ([]byte, bool, error)
+	Delete(ctx context.Context, tenantID uuid.UUID, requestID, phone string) error
+	Set(ctx context.Context, tenantID uuid.UUID, requestID, phone string, value []byte, ttl time.Duration) error
 }
 
 type OTPManager struct {
@@ -53,6 +54,7 @@ func NewOTPManager(p Params) *OTPManager {
 }
 
 type CreateParams struct {
+	TenantID  uuid.UUID
 	RequestID string
 	Phone     string
 	Secret    string
@@ -70,7 +72,7 @@ func (m *OTPManager) Create(ctx context.Context, p CreateParams) (string, error)
 		return "", fmt.Errorf("hash otp: %w", err)
 	}
 
-	if err := m.storage.Set(ctx, p.RequestID, p.Phone, hashOTP, m.cacheTTL); err != nil {
+	if err := m.storage.Set(ctx, p.TenantID, p.RequestID, p.Phone, hashOTP, m.cacheTTL); err != nil {
 		return "", fmt.Errorf("store otp: %w", err)
 	}
 
@@ -83,6 +85,7 @@ func (m *OTPManager) Create(ctx context.Context, p CreateParams) (string, error)
 }
 
 type VerifyParams struct {
+	TenantID  uuid.UUID
 	RequestID string
 	Phone     string
 	Code      string
@@ -90,17 +93,8 @@ type VerifyParams struct {
 
 // Verify — одноразовая проверка OTP
 func (m *OTPManager) Verify(ctx context.Context, p VerifyParams) error {
-
-	// Обработка стремится к фиксированному времени
-	start := time.Now()
-	defer func() {
-		if d := time.Since(start); d < 500*time.Millisecond {
-			time.Sleep(500*time.Millisecond - d)
-		}
-	}()
-
 	// Получаем OTP код из хранилища
-	hash, ok, err := m.storage.Get(ctx, p.RequestID, p.Phone)
+	hash, ok, err := m.storage.Get(ctx, p.TenantID, p.RequestID, p.Phone)
 	if err != nil {
 		return fmt.Errorf("get otp: %w", err)
 	}
@@ -114,7 +108,7 @@ func (m *OTPManager) Verify(ctx context.Context, p VerifyParams) error {
 	}
 
 	// При успехе удаляем OTP из хранилища
-	if err := m.storage.Delete(ctx, p.RequestID, p.Phone); err != nil {
+	if err := m.storage.Delete(ctx, p.TenantID, p.RequestID, p.Phone); err != nil {
 		return fmt.Errorf("delete otp: %w", err)
 	}
 
